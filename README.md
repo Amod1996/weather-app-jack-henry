@@ -19,8 +19,8 @@ This Go application provides a simple weather API service that retrieves weather
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/Amod1996/weather-app.git
-    cd weather-app
+    git clone https://github.com/Amod1996/weather-app-jack-henry.git
+    cd weather-app-jack-henry
     ```
 2. Set the `apiKey` variable in the main.go to your OpenWeather API key.   
 
