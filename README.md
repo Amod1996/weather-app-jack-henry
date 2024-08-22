@@ -39,13 +39,13 @@ This Go application provides a simple weather API service that retrieves weather
 
 1. Run the application(without docker):
     ```sh
-    ./weather-app
+    ./weather-app-jack-henry
     ```
 
 2. The server will start on port 8080 by default. You can set a different port by setting the `PORT` environment variable:
     ```sh
     export PORT=8080
-    ./weather-app
+    ./weather-app-jack-henry
     ```
 3. You can also run this service in Docker using :
     ```sh
