@@ -14,61 +14,26 @@ import (
 )
 
 const (
-	apiURL           = "https://api.openweathermap.org/data/2.5/weather"
-	apiKey           = "tempKey"        // Replace with your actual API key
+	apiURL           = "https://api.weather.gov/points"
 	cacheDuration    = 30 * time.Minute // Adjust cache duration as needed
 	evictionInterval = 1 * time.Minute  // Interval at which cache is checked for eviction
 )
 
-// WeatherResponse represents the structure of the weather data returned by the API
-type WeatherResponse struct {
-	Coord struct {
-		Lon float64 `json:"lon"`
-		Lat float64 `json:"lat"`
-	} `json:"coord"`
-	Weather []struct {
-		ID          int    `json:"id"`
-		Main        string `json:"main"`
-		Description string `json:"description"`
-		Icon        string `json:"icon"`
-	} `json:"weather"`
-	Base string `json:"base"`
-	Main struct {
-		Temp      float64 `json:"temp"`
-		FeelsLike float64 `json:"feels_like"`
-		TempMin   float64 `json:"temp_min"`
-		TempMax   float64 `json:"temp_max"`
-		Pressure  int     `json:"pressure"`
-		Humidity  int     `json:"humidity"`
-		SeaLevel  int     `json:"sea_level"`
-		GrndLevel int     `json:"grnd_level"`
-	} `json:"main"`
-	Visibility int `json:"visibility"`
-	Wind       struct {
-		Speed float64 `json:"speed"`
-		Deg   int     `json:"deg"`
-		Gust  float64 `json:"gust"`
-	} `json:"wind"`
-	Clouds struct {
-		All int `json:"all"`
-	} `json:"clouds"`
-	Dt  int64 `json:"dt"`
-	Sys struct {
-		Type    int    `json:"type"`
-		ID      int    `json:"id"`
-		Country string `json:"country"`
-		Sunrise int64  `json:"sunrise"`
-		Sunset  int64  `json:"sunset"`
-	} `json:"sys"`
-	Timezone int    `json:"timezone"`
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Cod      int    `json:"cod"`
+// ForecastResponse represents the structure of the weather data returned by the National Weather Service API
+type ForecastResponse struct {
+	Properties struct {
+		Periods []struct {
+			Name            string `json:"name"`
+			Temperature     int    `json:"temperature"`
+			TemperatureUnit string `json:"temperatureUnit"`
+			ShortForecast   string `json:"shortForecast"`
+		} `json:"periods"`
+	} `json:"properties"`
 }
 
 // CacheEntry represents a cache entry with weather data and a timestamp
 type CacheEntry struct {
-	data      WeatherResponse
+	data      ForecastResponse
 	timestamp time.Time
 }
 
@@ -122,17 +87,22 @@ func getWeather(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch data from OpenWeather API
-	url := fmt.Sprintf("%s?lat=%f&lon=%f&appid=%s&units=imperial", apiURL, lat, lon, apiKey)
-	resp, err := http.Get(url)
+	// Fetch data from National Weather Service API
+	forecastURL, err := getForecastURL(lat, lon)
+	if err != nil {
+		http.Error(w, "Failed to get forecast URL", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := http.Get(forecastURL)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		http.Error(w, "Failed to get weather data", http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
-	var weatherResponse WeatherResponse
-	if err := json.NewDecoder(resp.Body).Decode(&weatherResponse); err != nil {
+	var forecastResponse ForecastResponse
+	if err := json.NewDecoder(resp.Body).Decode(&forecastResponse); err != nil {
 		http.Error(w, "Failed to parse weather data", http.StatusInternalServerError)
 		return
 	}
@@ -140,54 +110,68 @@ func getWeather(w http.ResponseWriter, r *http.Request) {
 	// Cache the response
 	mu.Lock()
 	cache[key] = CacheEntry{
-		data:      weatherResponse,
+		data:      forecastResponse,
 		timestamp: time.Now(),
 	}
 	mu.Unlock()
 
-	respondWithWeather(w, weatherResponse)
+	respondWithWeather(w, forecastResponse)
+}
+
+// getForecastURL retrieves the forecast URL for the provided latitude and longitude
+func getForecastURL(lat, lon float64) (string, error) {
+	url := fmt.Sprintf("%s/%f,%f", apiURL, lat, lon)
+	resp, err := http.Get(url)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to get forecast URL")
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Properties struct {
+			Forecast string `json:"forecast"`
+		} `json:"properties"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to parse forecast URL")
+	}
+
+	return result.Properties.Forecast, nil
 }
 
 // respondWithWeather sends the weather data as a JSON response
-func respondWithWeather(w http.ResponseWriter, weatherResponse WeatherResponse) {
-	condition := weatherResponse.Weather[0].Main
-	temp := weatherResponse.Main.Temp
+func respondWithWeather(w http.ResponseWriter, forecastResponse ForecastResponse) {
+	todayForecast := forecastResponse.Properties.Periods[0]
 
-	var temperatureDescription string
-	switch {
-	case temp <= 32:
-		temperatureDescription = "very cold"
-	case temp > 32 && temp <= 50:
-		temperatureDescription = "cold"
-	case temp > 50 && temp <= 65:
-		temperatureDescription = "chilly"
-	case temp > 65 && temp <= 85:
-		temperatureDescription = "warm"
-	case temp > 85 && temp <= 100:
-		temperatureDescription = "hot"
-	default:
-		temperatureDescription = "extreme heat"
-	}
+	temperatureDescription := characterizeTemperature(todayForecast.Temperature)
 
 	response := map[string]interface{}{
-		"location": map[string]interface{}{
-			"name":      weatherResponse.Name,
-			"latitude":  weatherResponse.Coord.Lat,
-			"longitude": weatherResponse.Coord.Lon,
-		},
-		"current": map[string]interface{}{
-			"condition":              condition,
-			"temperature":            fmt.Sprintf("%.2f", temp),
-			"temperatureDescription": temperatureDescription,
-			"humidity":               weatherResponse.Main.Humidity,
-			"pressure":               weatherResponse.Main.Pressure,
-			"windSpeed":              weatherResponse.Wind.Speed,
-			"windDirection":          weatherResponse.Wind.Deg,
-		},
+		"shortForecast":      todayForecast.ShortForecast,
+		"temperature":        todayForecast.Temperature,
+		"temperatureUnit":    todayForecast.TemperatureUnit,
+		"weatherDescription": temperatureDescription,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// characterizeTemperature classifies the temperature into "hot", "cold", or "moderate"
+func characterizeTemperature(temp int) string {
+	switch {
+	case temp <= 40:
+		return "cold"
+	case temp > 40 && temp <= 55:
+		return "chilly"
+	case temp > 55 && temp <= 75:
+		return "moderate"
+	case temp > 75 && temp <= 90:
+		return "hot"
+	case temp > 90:
+		return "very hot"
+	default:
+		return "unknown"
+	}
 }
 
 // startCacheEviction starts a goroutine to periodically evict expired cache entries
@@ -205,29 +189,11 @@ func startCacheEviction() {
 	}
 }
 
-// getCache handles the HTTP request to return the current cache state
-func getCache(w http.ResponseWriter, r *http.Request) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	response := make(map[string]interface{})
-	for key, entry := range cache {
-		response[key] = map[string]interface{}{
-			"data":      entry.data,
-			"timestamp": entry.timestamp,
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
 // main is the entry point of the application
 func main() {
 	go startCacheEviction()
 	r := mux.NewRouter()
 	r.HandleFunc("/weather", getWeather).Methods("GET")
-	r.HandleFunc("/cache", getCache).Methods("GET")
 
 	port := os.Getenv("PORT")
 	if port == "" {

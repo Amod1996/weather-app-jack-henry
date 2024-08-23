@@ -9,7 +9,6 @@ services:
       - "8080:8080"
     environment:
       - PORT=8080
-      - OPENWEATHER_API_KEY=d294a0007ee52920457615040207eb28
     networks:
       - weather-network
 

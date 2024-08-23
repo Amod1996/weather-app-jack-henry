@@ -1,4 +1,4 @@
-module Users/achoudhary/Work/weather-app
+module weather-app-jack-henry
 
 go 1.22.3
 
