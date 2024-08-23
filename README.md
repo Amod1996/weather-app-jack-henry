@@ -15,6 +15,7 @@ This Go application provides a simple weather API service that retrieves weather
 ## Prerequisites
 
 - Go 1.16 or later
+- Docker should be running and installed if you are running this app in docker
 
 ## Installation
 
